@@ -1,6 +1,6 @@
 --[[
     WRAITH | AIM ENGINE
-    Version: 1.0
+    Version: 2.0 (Stable Input)
 ]]
 
 local WraithAim = {}
@@ -8,12 +8,13 @@ local WraithAim = {}
 WraithAim.Settings = {
     Enabled = false,
     TeamCheck = false,
-    Smoothing = 0,         -- 0 = Instant, 1 = Very Slow
-    TargetPart = "Head",   -- Head, HumanoidRootPart, etc.
-    Method = "Cursor",     -- "Cursor", "Distance"
-    FOV = 100,             -- Radius
+    Smoothing = 0,
+    TargetPart = "Head",
+    Method = "Cursor", -- "Cursor" or "Distance"
+    FOV = 100,
     ShowFOV = false,
-    FOVColor = Color3.fromRGB(255, 255, 255)
+    FOVColor = Color3.fromRGB(255, 255, 255),
+    TriggerKey = Enum.UserInputType.MouseButton2 -- Default
 }
 
 local Services = {
@@ -26,7 +27,6 @@ local LocalPlayer = Services.Players.LocalPlayer
 local Connection = nil
 local FOVCircle = Drawing.new("Circle")
 
--- // HELPER: Get Closest Player
 local function GetTarget()
     local BestTarget = nil
     local BestDist = math.huge
@@ -44,14 +44,13 @@ local function GetTarget()
                 local ScreenPos, OnScreen = Services.Camera:WorldToViewportPoint(Part.Position)
                 
                 if OnScreen then
-                    local Dist = 0
+                    local Dist
                     if WraithAim.Settings.Method == "Cursor" then
                         Dist = (Vector2.new(ScreenPos.X, ScreenPos.Y) - MousePos).Magnitude
-                    else -- Distance (3D)
+                    else
                         Dist = (LocalPlayer.Character.HumanoidRootPart.Position - Part.Position).Magnitude
                     end
                     
-                    -- Check FOV (Only for Cursor method mostly, but applies to all for safety)
                     if WraithAim.Settings.Method == "Cursor" and Dist > WraithAim.Settings.FOV then continue end
 
                     if Dist < BestDist then
@@ -65,9 +64,19 @@ local function GetTarget()
     return BestTarget
 end
 
--- // RENDER LOOP
+local function IsKeyDown()
+    local Key = WraithAim.Settings.TriggerKey
+    if typeof(Key) == "EnumItem" then
+        if Key.EnumType == Enum.KeyCode then
+            return Services.UserInputService:IsKeyDown(Key)
+        elseif Key.EnumType == Enum.UserInputType then
+            return Services.UserInputService:IsMouseButtonPressed(Key)
+        end
+    end
+    return false
+end
+
 local function Update()
-    -- Update FOV Circle
     FOVCircle.Visible = (WraithAim.Settings.ShowFOV and WraithAim.Settings.Enabled)
     FOVCircle.Radius = WraithAim.Settings.FOV
     FOVCircle.Position = Services.UserInputService:GetMouseLocation()
@@ -76,19 +85,21 @@ local function Update()
     FOVCircle.Thickness = 1
 
     if not WraithAim.Settings.Enabled then return end
-    if not Services.UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then return end -- Right Click to Aim
-
-    local Target = GetTarget()
-    if Target then
-        local CurrentCFrame = Services.Camera.CFrame
-        local TargetCFrame = CFrame.new(Services.Camera.CFrame.Position, Target.Position)
-        
-        if WraithAim.Settings.Smoothing > 0 then
-            -- Smooth Aim
-            Services.Camera.CFrame = CurrentCFrame:Lerp(TargetCFrame, (1 - WraithAim.Settings.Smoothing))
-        else
-            -- Snap Aim
-            Services.Camera.CFrame = TargetCFrame
+    
+    if IsKeyDown() then
+        local Target = GetTarget()
+        if Target then
+            -- Verify Target is still valid before moving camera
+            if Target.Parent and Target.Parent:FindFirstChild("Humanoid") and Target.Parent.Humanoid.Health > 0 then
+                local CurrentCFrame = Services.Camera.CFrame
+                local TargetCFrame = CFrame.new(Services.Camera.CFrame.Position, Target.Position)
+                
+                if WraithAim.Settings.Smoothing > 0 then
+                    Services.Camera.CFrame = CurrentCFrame:Lerp(TargetCFrame, (1 - WraithAim.Settings.Smoothing))
+                else
+                    Services.Camera.CFrame = TargetCFrame
+                end
+            end
         end
     end
 end
