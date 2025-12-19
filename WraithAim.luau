@@ -1,6 +1,6 @@
 --[[
     WRAITH | AIM ENGINE
-    Version: 2.0 (Stable Input)
+    Version: 2.5 (Type Safe)
 ]]
 
 local WraithAim = {}
@@ -10,11 +10,11 @@ WraithAim.Settings = {
     TeamCheck = false,
     Smoothing = 0,
     TargetPart = "Head",
-    Method = "Cursor", -- "Cursor" or "Distance"
+    Method = "Cursor", 
     FOV = 100,
     ShowFOV = false,
     FOVColor = Color3.fromRGB(255, 255, 255),
-    TriggerKey = Enum.UserInputType.MouseButton2 -- Default
+    TriggerKey = Enum.UserInputType.MouseButton2
 }
 
 local Services = {
@@ -27,17 +27,27 @@ local LocalPlayer = Services.Players.LocalPlayer
 local Connection = nil
 local FOVCircle = Drawing.new("Circle")
 
+-- // HELPER: Fixes Rayfield returning tables {"Head"} instead of "Head"
+local function Sanitize(Val)
+    if type(Val) == "table" then return Val[1] end
+    return Val
+end
+
 local function GetTarget()
     local BestTarget = nil
     local BestDist = math.huge
     local MousePos = Services.UserInputService:GetMouseLocation()
+    
+    -- Sanitize Settings on the fly
+    local TgtPartName = Sanitize(WraithAim.Settings.TargetPart)
+    local MethodName = Sanitize(WraithAim.Settings.Method)
     
     for _, Player in ipairs(Services.Players:GetPlayers()) do
         if Player ~= LocalPlayer then
             if WraithAim.Settings.TeamCheck and Player.Team == LocalPlayer.Team then continue end
             
             local Char = Player.Character
-            local Part = Char and Char:FindFirstChild(WraithAim.Settings.TargetPart)
+            local Part = Char and Char:FindFirstChild(TgtPartName)
             local Hum = Char and Char:FindFirstChild("Humanoid")
             
             if Part and Hum and Hum.Health > 0 then
@@ -45,13 +55,13 @@ local function GetTarget()
                 
                 if OnScreen then
                     local Dist
-                    if WraithAim.Settings.Method == "Cursor" then
+                    if MethodName == "Cursor" then
                         Dist = (Vector2.new(ScreenPos.X, ScreenPos.Y) - MousePos).Magnitude
                     else
                         Dist = (LocalPlayer.Character.HumanoidRootPart.Position - Part.Position).Magnitude
                     end
                     
-                    if WraithAim.Settings.Method == "Cursor" and Dist > WraithAim.Settings.FOV then continue end
+                    if MethodName == "Cursor" and Dist > WraithAim.Settings.FOV then continue end
 
                     if Dist < BestDist then
                         BestDist = Dist
@@ -89,7 +99,6 @@ local function Update()
     if IsKeyDown() then
         local Target = GetTarget()
         if Target then
-            -- Verify Target is still valid before moving camera
             if Target.Parent and Target.Parent:FindFirstChild("Humanoid") and Target.Parent.Humanoid.Health > 0 then
                 local CurrentCFrame = Services.Camera.CFrame
                 local TargetCFrame = CFrame.new(Services.Camera.CFrame.Position, Target.Position)
