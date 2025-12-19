@@ -1,6 +1,6 @@
 --[[
     WRAITH | VISUAL ENGINE
-    Version: 2.0 (Skeleton & Tracers)
+    Version: 2.5 (Stable Skeleton)
 ]]
 
 local Wraith = {}
@@ -12,14 +12,13 @@ Wraith.Settings = {
     Skeleton = false,
     Tracer = false,
     
-    -- Properties
     BoxColor = Color3.fromRGB(0, 255, 120),
     SkeletonColor = Color3.fromRGB(255, 255, 255),
     TracerColor = Color3.fromRGB(0, 255, 120),
     OutlineColor = Color3.fromRGB(0, 0, 0),
     
     Thickness = 1,
-    TracerOrigin = "Bottom", -- "Bottom", "Top", "Mouse"
+    TracerOrigin = "Bottom", -- Options: "Bottom", "Top", "Mouse"
     TeamCheck = false
 }
 
@@ -39,13 +38,13 @@ local function CreateDrawing(Type, Props)
     return Obj
 end
 
---// SKELETON CONNECTIONS
+-- R15 / R6 Connections
 local SkeletonConnectionsR15 = {
-    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"}, {"LowerTorso", "LeftUpperLeg"},
-    {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"}, {"LowerTorso", "RightUpperLeg"},
-    {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}, {"UpperTorso", "LeftUpperArm"},
-    {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"}, {"UpperTorso", "RightUpperArm"},
-    {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"}
+    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"}, 
+    {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"},
+    {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"}
 }
 local SkeletonConnectionsR6 = {
     {"Head", "Torso"}, {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
@@ -54,42 +53,31 @@ local SkeletonConnectionsR6 = {
 
 local function AddEsp(Player)
     if Cache[Player] then return end
-    
     local Objects = {
-        -- Box
-        BoxOutline = CreateDrawing("Square", { Transparency = 1, Thickness = 3, Filled = false, ZIndex = 1 }),
-        Box = CreateDrawing("Square", { Transparency = 1, Thickness = 1, Filled = false, ZIndex = 2 }),
-        -- Tracer
-        TracerOutline = CreateDrawing("Line", { Transparency = 1, Thickness = 3, ZIndex = 1 }),
-        Tracer = CreateDrawing("Line", { Transparency = 1, Thickness = 1, ZIndex = 2 }),
-        -- Skeleton (We create 15 lines max, reused)
+        BoxOutline = CreateDrawing("Square", {Transparency=1, Thickness=3, Filled=false, ZIndex=1}),
+        Box = CreateDrawing("Square", {Transparency=1, Thickness=1, Filled=false, ZIndex=2}),
+        TracerOutline = CreateDrawing("Line", {Transparency=1, Thickness=3, ZIndex=1}),
+        Tracer = CreateDrawing("Line", {Transparency=1, Thickness=1, ZIndex=2}),
         Skeleton = {}
     }
-
-    -- Corner Box
     for i = 1, 8 do
-        Objects["CornerOutline"..i] = CreateDrawing("Line", { Transparency = 1, Thickness = 3, ZIndex = 1, Visible = false })
-        Objects["Corner"..i] = CreateDrawing("Line", { Transparency = 1, Thickness = 1, ZIndex = 2, Visible = false })
+        Objects["CornerOutline"..i] = CreateDrawing("Line", {Transparency=1, Thickness=3, ZIndex=1, Visible=false})
+        Objects["Corner"..i] = CreateDrawing("Line", {Transparency=1, Thickness=1, ZIndex=2, Visible=false})
     end
-
-    -- Skeleton Lines
+    -- Create 16 skeleton lines buffer
     for i = 1, 16 do
-        table.insert(Objects.Skeleton, CreateDrawing("Line", { Transparency = 1, Thickness = 1, ZIndex = 2, Visible = false }))
+        table.insert(Objects.Skeleton, CreateDrawing("Line", {Transparency=1, Thickness=1, ZIndex=2, Visible=false}))
     end
-    
     Cache[Player] = Objects
 end
 
 local function RemoveEsp(Player)
     if Cache[Player] then
         local Objs = Cache[Player]
-        if Objs.Box then Objs.Box:Remove(); Objs.BoxOutline:Remove() end
-        if Objs.Tracer then Objs.Tracer:Remove(); Objs.TracerOutline:Remove() end
-        for i = 1, 8 do 
-            if Objs["Corner"..i] then Objs["Corner"..i]:Remove() end
-            if Objs["CornerOutline"..i] then Objs["CornerOutline"..i]:Remove() end
-        end
-        for _, Line in ipairs(Objs.Skeleton) do Line:Remove() end
+        Objs.Box:Remove(); Objs.BoxOutline:Remove()
+        Objs.Tracer:Remove(); Objs.TracerOutline:Remove()
+        for i=1,8 do Objs["Corner"..i]:Remove(); Objs["CornerOutline"..i]:Remove() end
+        for _, L in ipairs(Objs.Skeleton) do L:Remove() end
         Cache[Player] = nil
     end
 end
@@ -109,7 +97,7 @@ local function Update()
             local IsAlive = (Char and Root and Hum and Hum.Health > 0)
             local ShouldDraw = (S.Enabled and IsAlive and not IsTeammate)
             
-            -- RESET VISIBILITY
+            -- Hide All First
             Objects.Box.Visible = false; Objects.BoxOutline.Visible = false
             Objects.Tracer.Visible = false; Objects.TracerOutline.Visible = false
             for i=1,8 do Objects["Corner"..i].Visible = false; Objects["CornerOutline"..i].Visible = false end
@@ -119,24 +107,20 @@ local function Update()
                 local RootPos, OnScreen = Services.Camera:WorldToViewportPoint(Root.Position)
                 
                 if OnScreen then
+                    -- Calc Box
                     local HeadPos = Services.Camera:WorldToViewportPoint(Root.Position + Vector3.new(0, 2, 0))
                     local LegPos = Services.Camera:WorldToViewportPoint(Root.Position - Vector3.new(0, 3, 0))
-                    local Height = math.abs(HeadPos.Y - LegPos.Y)
-                    local Width = Height * 0.55 
-                    local Size = Vector2.new(math.floor(Width), math.floor(Height))
-                    local Position = Vector2.new(math.floor(RootPos.X - Width / 2), math.floor(HeadPos.Y))
+                    local Size = Vector2.new(math.floor((math.abs(HeadPos.Y - LegPos.Y) * 0.55)), math.floor(math.abs(HeadPos.Y - LegPos.Y)))
+                    local Position = Vector2.new(math.floor(RootPos.X - Size.X / 2), math.floor(HeadPos.Y))
                     
-                    -- // 1. BOX ESP
+                    -- 1. BOX
                     if S.Box then
                         Objects.BoxOutline.Visible = true; Objects.BoxOutline.Size = Size; Objects.BoxOutline.Position = Position; Objects.BoxOutline.Color = S.OutlineColor
                         Objects.Box.Visible = true; Objects.Box.Size = Size; Objects.Box.Position = Position; Objects.Box.Color = S.BoxColor; Objects.Box.Thickness = S.Thickness
                     elseif S.CornerBox then
                         local LineLen = math.ceil(Size.X / 3)
                         local X, Y, W, H = Position.X, Position.Y, Size.X, Size.Y
-                        local Points = {
-                            {X, Y, X+LineLen, Y}, {X, Y, X, Y+LineLen}, {X+W, Y, X+W-LineLen, Y}, {X+W, Y, X+W, Y+LineLen},
-                            {X, Y+H, X+LineLen, Y+H}, {X, Y+H, X, Y+H-LineLen}, {X+W, Y+H, X+W-LineLen, Y+H}, {X+W, Y+H, X+W, Y+H-LineLen}
-                        }
+                        local Points = {{X,Y,X+LineLen,Y},{X,Y,X,Y+LineLen},{X+W,Y,X+W-LineLen,Y},{X+W,Y,X+W,Y+LineLen},{X,Y+H,X+LineLen,Y+H},{X,Y+H,X,Y+H-LineLen},{X+W,Y+H,X+W-LineLen,Y+H},{X+W,Y+H,X+W,Y+H-LineLen}}
                         for i = 1, 8 do
                             local P = Points[i]
                             Objects["CornerOutline"..i].Visible = true; Objects["CornerOutline"..i].From = Vector2.new(P[1], P[2]); Objects["CornerOutline"..i].To = Vector2.new(P[3], P[4]); Objects["CornerOutline"..i].Color = S.OutlineColor
@@ -144,7 +128,7 @@ local function Update()
                         end
                     end
 
-                    -- // 2. TRACERS
+                    -- 2. TRACERS
                     if S.Tracer then
                         local Origin
                         if S.TracerOrigin == "Top" then Origin = Vector2.new(Services.Camera.ViewportSize.X/2, 0)
@@ -152,30 +136,32 @@ local function Update()
                         else Origin = Vector2.new(Services.Camera.ViewportSize.X/2, Services.Camera.ViewportSize.Y) end
                         
                         local To = Vector2.new(RootPos.X, RootPos.Y)
-                        if S.Box or S.CornerBox then To = Vector2.new(RootPos.X, Position.Y + Size.Y) end -- Connect to bottom of box if box exists
+                        if S.Box or S.CornerBox then To = Vector2.new(RootPos.X, Position.Y + Size.Y) end
 
                         Objects.TracerOutline.Visible = true; Objects.TracerOutline.From = Origin; Objects.TracerOutline.To = To; Objects.TracerOutline.Color = S.OutlineColor
                         Objects.Tracer.Visible = true; Objects.Tracer.From = Origin; Objects.Tracer.To = To; Objects.Tracer.Color = S.TracerColor; Objects.Tracer.Thickness = S.Thickness
                     end
+                end
 
-                    -- // 3. SKELETON
-                    if S.Skeleton then
-                        local Connections = (Hum.RigType == Enum.HumanoidRigType.R15) and SkeletonConnectionsR15 or SkeletonConnectionsR6
-                        for Index, Pair in ipairs(Connections) do
-                            local P1 = Char:FindFirstChild(Pair[1])
-                            local P2 = Char:FindFirstChild(Pair[2])
-                            if P1 and P2 then
-                                local V1, O1 = Services.Camera:WorldToViewportPoint(P1.Position)
-                                local V2, O2 = Services.Camera:WorldToViewportPoint(P2.Position)
-                                if O1 and O2 then
-                                    local Line = Objects.Skeleton[Index]
-                                    if Line then
-                                        Line.Visible = true
-                                        Line.From = Vector2.new(V1.X, V1.Y)
-                                        Line.To = Vector2.new(V2.X, V2.Y)
-                                        Line.Color = S.SkeletonColor
-                                        Line.Thickness = S.Thickness
-                                    end
+                -- 3. SKELETON (Can be drawn even if Root is slightly off screen, as long as limbs are on screen)
+                if S.Skeleton then
+                    local Connections = (Hum.RigType == Enum.HumanoidRigType.R15) and SkeletonConnectionsR15 or SkeletonConnectionsR6
+                    for Index, Pair in ipairs(Connections) do
+                        local P1 = Char:FindFirstChild(Pair[1])
+                        local P2 = Char:FindFirstChild(Pair[2])
+                        if P1 and P2 then
+                            local V1, O1 = Services.Camera:WorldToViewportPoint(P1.Position)
+                            local V2, O2 = Services.Camera:WorldToViewportPoint(P2.Position)
+                            
+                            -- IMPORTANT FIX: Both points must be on screen to draw, otherwise lines stretch wildly
+                            if O1 and O2 then 
+                                local Line = Objects.Skeleton[Index]
+                                if Line then
+                                    Line.Visible = true
+                                    Line.From = Vector2.new(V1.X, V1.Y)
+                                    Line.To = Vector2.new(V2.X, V2.Y)
+                                    Line.Color = S.SkeletonColor
+                                    Line.Thickness = S.Thickness
                                 end
                             end
                         end
