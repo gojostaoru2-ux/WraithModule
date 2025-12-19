@@ -1,6 +1,6 @@
 --[[
     WRAITH | VISUAL ENGINE
-    Version: 2.5 (Stable Skeleton)
+    Version: 3.0 (Skeleton Remastered)
 ]]
 
 local Wraith = {}
@@ -18,7 +18,7 @@ Wraith.Settings = {
     OutlineColor = Color3.fromRGB(0, 0, 0),
     
     Thickness = 1,
-    TracerOrigin = "Bottom", -- Options: "Bottom", "Top", "Mouse"
+    TracerOrigin = "Bottom", 
     TeamCheck = false
 }
 
@@ -38,16 +38,19 @@ local function CreateDrawing(Type, Props)
     return Obj
 end
 
--- R15 / R6 Connections
-local SkeletonConnectionsR15 = {
-    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"}, 
+-- // CLEANER SKELETON MAPS
+local R15_Map = {
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
     {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"},
     {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"},
     {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"},
     {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"}
 }
-local SkeletonConnectionsR6 = {
-    {"Head", "Torso"}, {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
+
+local R6_Map = {
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
     {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
 }
 
@@ -64,7 +67,7 @@ local function AddEsp(Player)
         Objects["CornerOutline"..i] = CreateDrawing("Line", {Transparency=1, Thickness=3, ZIndex=1, Visible=false})
         Objects["Corner"..i] = CreateDrawing("Line", {Transparency=1, Thickness=1, ZIndex=2, Visible=false})
     end
-    -- Create 16 skeleton lines buffer
+    -- Pre-create 16 bones
     for i = 1, 16 do
         table.insert(Objects.Skeleton, CreateDrawing("Line", {Transparency=1, Thickness=1, ZIndex=2, Visible=false}))
     end
@@ -97,7 +100,7 @@ local function Update()
             local IsAlive = (Char and Root and Hum and Hum.Health > 0)
             local ShouldDraw = (S.Enabled and IsAlive and not IsTeammate)
             
-            -- Hide All First
+            -- Hide Everything Frame Start
             Objects.Box.Visible = false; Objects.BoxOutline.Visible = false
             Objects.Tracer.Visible = false; Objects.TracerOutline.Visible = false
             for i=1,8 do Objects["Corner"..i].Visible = false; Objects["CornerOutline"..i].Visible = false end
@@ -106,14 +109,17 @@ local function Update()
             if ShouldDraw then
                 local RootPos, OnScreen = Services.Camera:WorldToViewportPoint(Root.Position)
                 
+                -- Optimization: Only calculate ESP geometry if root is somewhat visible
                 if OnScreen then
-                    -- Calc Box
+                    -- Box Math
                     local HeadPos = Services.Camera:WorldToViewportPoint(Root.Position + Vector3.new(0, 2, 0))
                     local LegPos = Services.Camera:WorldToViewportPoint(Root.Position - Vector3.new(0, 3, 0))
-                    local Size = Vector2.new(math.floor((math.abs(HeadPos.Y - LegPos.Y) * 0.55)), math.floor(math.abs(HeadPos.Y - LegPos.Y)))
-                    local Position = Vector2.new(math.floor(RootPos.X - Size.X / 2), math.floor(HeadPos.Y))
+                    local Height = math.abs(HeadPos.Y - LegPos.Y)
+                    local Width = Height * 0.55
+                    local Size = Vector2.new(math.floor(Width), math.floor(Height))
+                    local Position = Vector2.new(math.floor(RootPos.X - Width / 2), math.floor(HeadPos.Y))
                     
-                    -- 1. BOX
+                    -- [BOX]
                     if S.Box then
                         Objects.BoxOutline.Visible = true; Objects.BoxOutline.Size = Size; Objects.BoxOutline.Position = Position; Objects.BoxOutline.Color = S.OutlineColor
                         Objects.Box.Visible = true; Objects.Box.Size = Size; Objects.Box.Position = Position; Objects.Box.Color = S.BoxColor; Objects.Box.Thickness = S.Thickness
@@ -128,7 +134,7 @@ local function Update()
                         end
                     end
 
-                    -- 2. TRACERS
+                    -- [TRACER]
                     if S.Tracer then
                         local Origin
                         if S.TracerOrigin == "Top" then Origin = Vector2.new(Services.Camera.ViewportSize.X/2, 0)
@@ -143,25 +149,29 @@ local function Update()
                     end
                 end
 
-                -- 3. SKELETON (Can be drawn even if Root is slightly off screen, as long as limbs are on screen)
+                -- [SKELETON]
+                -- We run this partially outside the root check to allow limbs to be seen even if torso is barely offscreen
                 if S.Skeleton then
-                    local Connections = (Hum.RigType == Enum.HumanoidRigType.R15) and SkeletonConnectionsR15 or SkeletonConnectionsR6
-                    for Index, Pair in ipairs(Connections) do
+                    local Map = (Hum.RigType == Enum.HumanoidRigType.R15) and R15_Map or R6_Map
+                    
+                    for Index, Pair in ipairs(Map) do
                         local P1 = Char:FindFirstChild(Pair[1])
                         local P2 = Char:FindFirstChild(Pair[2])
+                        
                         if P1 and P2 then
                             local V1, O1 = Services.Camera:WorldToViewportPoint(P1.Position)
                             local V2, O2 = Services.Camera:WorldToViewportPoint(P2.Position)
                             
-                            -- IMPORTANT FIX: Both points must be on screen to draw, otherwise lines stretch wildly
-                            if O1 and O2 then 
-                                local Line = Objects.Skeleton[Index]
-                                if Line then
-                                    Line.Visible = true
-                                    Line.From = Vector2.new(V1.X, V1.Y)
-                                    Line.To = Vector2.new(V2.X, V2.Y)
-                                    Line.Color = S.SkeletonColor
-                                    Line.Thickness = S.Thickness
+                            -- CRITICAL FIX: Both joints must be visible to draw the bone
+                            -- This prevents lines stretching across the screen when one joint is behind camera
+                            if O1 and O2 then
+                                local Bone = Objects.Skeleton[Index]
+                                if Bone then
+                                    Bone.Visible = true
+                                    Bone.From = Vector2.new(V1.X, V1.Y)
+                                    Bone.To = Vector2.new(V2.X, V2.Y)
+                                    Bone.Color = S.SkeletonColor
+                                    Bone.Thickness = S.Thickness
                                 end
                             end
                         end
