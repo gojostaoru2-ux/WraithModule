@@ -1,365 +1,432 @@
-# VoxC Language Specification & Technical Reference
 
----
 
-## Table of Contents
-1.  **System Architecture**
-    *   1.1 The Virtual Machine
-    *   1.2 Resource Constraints (The Triad)
-    *   1.3 Execution Pipeline
-2.  **Memory Architecture**
-    *   2.1 The Heap Model
-    *   2.2 Data Representation (IEEE 754)
-    *   2.3 Memory Layouts & Byte Alignment
-    *   2.4 Pointer Arithmetic
-    *   2.5 Memory Safety & Leaks
-3.  **Language Syntax**
-    *   3.1 Lexical Grammar
-    *   3.2 Variables & Scope
-    *   3.3 Control Flow
-    *   3.4 Operators & Precedence
-4.  **Standard Library (API)**
-    *   4.1 System Input/Output
-    *   4.2 Spatial Querying
-    *   4.3 Physics Manipulation
-    *   4.4 Direct Memory Access (DMA)
-5.  **Advanced Mathematics Library**
-    *   5.1 Implementing Distance
-    *   5.2 Implementing Normalization
-    *   5.3 Implementing Dot Product
-6.  **Design Patterns & Optimization**
-    *   6.1 The "Cache & Carry" Strategy
-    *   6.2 The "Safe Scan" Protocol
-7.  **Error Codes & Troubleshooting**
+## 1.1 What is this game?
+Welcome to the Vox Engine. In this game, you do not fight with swords or guns. You fight with **Logic**.
 
----
+You play as a hacker in a simulated world. Every entity, every player, and every movement is governed by data. You have been given a tool called **VoxC**—a programming language that lets you rewrite that data.
 
-# 1. System Architecture
+If you want to push an enemy away, you don't press a button. You write a script that tells the physics engine: *"Take that guy, and apply 5,000 units of force to the left."*
 
-### 1.1 The Virtual Machine
-VoxC does not run directly on the Roblox Lua engine. Instead, it is compiled into an Abstract Syntax Tree (AST) and executed by the **VoxVM**. This sandboxed environment ensures that user code remains isolated from critical server processes.
+## 1.2 What is a Variable?
+Imagine a cardboard box. You can write a name on the outside of the box, and you can put **one number** inside the box.
 
-The VM operates on a **Fetch-Decode-Execute** cycle. It parses one statement at a time, resolves memory addresses, and executes the logic while deducting energy costs in real-time.
+In programming, this is a **Variable**.
 
-### 1.2 Resource Constraints (The Triad)
-To simulate the limitations of embedded hacking devices, the VoxVM enforces three hard limits. Exceeding any of these results in an immediate `SIGKILL` (Script Termination).
-
-| Resource | Limit | Description | Failure State |
-| :--- | :--- | :--- | :--- |
-| **Energy** | 2,000 Units | The "fuel" for execution. Heavy API calls drain this fast. | `OUT OF ENERGY` |
-| **Cycles** | 10,000 Ops | The CPU time allowed. Prevents infinite loops/server freezing. | `MAX CYCLES EXCEEDED` |
-| **Memory** | 4.0 MB | The Heap space available for dynamic allocation. | `OUT OF MEMORY` |
-
-### 1.3 Execution Pipeline
-1.  **Source:** Raw text input from the IDE.
-2.  **Lexer:** Converts text into tokens (`ID`, `NUM`, `SYM`, `STR`).
-3.  **Parser:** Validates grammar and builds the AST.
-4.  **Linker:** Allocates static memory for variables (`var`).
-5.  **Runtime:** Executes instructions.
-
----
-
-# 2. Memory Architecture
-
-This is the most critical subsystem of VoxC. Unlike high-level languages (Lua, Python), VoxC has **no Garbage Collection**. You are responsible for every byte.
-
-### 2.1 The Heap Model
-The Heap is a contiguous array of 4,194,304 bytes.
-*   **Address Space:** `0x0000` to `0x400000`.
-*   **Null Pointer:** `0`. Accessing address 0 is safe (returns 0) but usually indicates a logic error.
-*   **Allocation Strategy:** The VM uses a linear allocator. `free()` marks blocks as reusable, but fragmentation can occur if you allocate/free in random orders.
-
-### 2.2 Data Representation
-VoxC is typeless. Every variable and memory slot holds a **64-bit Double-Precision Floating Point Number**.
-*   **Integers:** Represented as Floats (e.g., `5.0`).
-*   **Pointers:** Represented as Floats (e.g., `1024.0`).
-*   **Booleans:** `1.0` is True, `0.0` is False.
-
-### 2.3 Memory Layouts & Byte Alignment
-When you allocate memory, you must understand how data is structured.
-
-#### The Vector3 Structure (24 Bytes)
-Used for Position, Velocity, and Raycasting.
-```text
-[ Pointer (Base) ]
-|
-+---Offset 0x00:  X Component (8 Bytes)
-|
-+---Offset 0x08:  Y Component (8 Bytes)
-|
-+---Offset 0x10:  Z Component (8 Bytes)
-```
-
-#### The Dynamic List Structure (8 + N*8 Bytes)
-Returned by `near()`.
-```text
-[ Pointer (Base) ]
-|
-+---Offset 0x00:  Count (Number of items, e.g., 2)
-|
-+---Offset 0x08:  EntityID_1 (8 Bytes)
-|
-+---Offset 0x10:  EntityID_2 (8 Bytes)
-|
-...
-```
-
-### 2.4 Pointer Arithmetic
-To traverse a list, you cannot simply use `list[i]`. You must calculate the raw memory address.
-
-**Formula:**
-$$Address = Base + HeaderSize + (Index \times ElementSize)$$
-
-**In VoxC:**
 ```c
-// Assuming 'list' is a pointer to a List Structure
-// Accessing index 'i'
-var ptr = list + 8 + (i * 8);
-var value = mem_read(ptr);
+var health = 100;
+```
+*   **var**: Tells the computer "I am making a new box."
+*   **health**: The name on the box.
+*   **=**: Puts something inside.
+*   **100**: The number inside.
+*   **;**: The period at the end of the sentence. "I am done with this line."
+
+You can change what is in the box later:
+```c
+health = 50; // The box now holds 50.
+health = health + 10; // The box now holds 60.
 ```
 
-### 2.5 Memory Safety & Leaks
-**The Golden Rule:** For every `malloc/vec/near/pos`, there must be a `free`.
+## 1.3 The Computer Reads Top-to-Bottom
+The computer is very literal. It reads line 1, does it. Then line 2, does it.
 
-**Memory Leak Example (Catastrophic):**
+**Example:**
 ```c
-while (i < 100) {
-    // This allocates 24 bytes every loop iteration.
-    // The previous 24 bytes are lost forever in the heap (Leaked).
-    // After enough iterations, the VM crashes.
-    force(target, vec(0, 10, 0)); 
+var x = 10;
+x = 0;
+x = 5;
+```
+At the end of this script, `x` is 5. The previous numbers are gone.
+
+## 1.4 Decisions (If / Else)
+Sometimes you want the computer to make a choice. We use `if` statements. Think of it like a question.
+
+"**IF** my health is less than 10, **THEN** run away."
+
+In Code:
+```c
+if (health < 10) {
+    // This code ONLY runs if the check is true
+    run_away();
+}
+```
+
+## 1.5 Repetition (While Loops)
+Computers are great at doing boring things over and over again. This is called a **Loop**.
+
+"**WHILE** there are enemies nearby, **KEEP** attacking."
+
+In Code:
+```c
+var enemies = 5;
+while (enemies > 0) {
+    attack();
+    enemies = enemies - 1;
+}
+```
+**Danger:** If you tell the computer `while (1 == 1)`, it will run forever because 1 always equals 1. This is called an **Infinite Loop**. The Vox Engine detects this and will shut down your script (Error: `MAX CYCLES`) to prevent the game from freezing.
+
+---
+
+# Module 2: A Crash Course in 3D Math
+**"What is a Vector? What are Coordinates?"**
+
+---
+
+## 2.1 The World is a Grid (XYZ)
+Imagine a flat sheet of graph paper. You have a center point `(0,0)`.
+*   If you go **Right**, X gets bigger.
+*   If you go **Up**, Y gets bigger.
+
+Now, imagine the world is a box. We add a third direction: **Depth**.
+*   **X**: Left (-) and Right (+)
+*   **Y**: Up (+) and Down (-)
+*   **Z**: Forward (-) and Backward (+)
+
+This is called the **Cartesian Coordinate System**. Every object in the game is located at specific `(X, Y, Z)` coordinates.
+
+## 2.2 What is a Vector?
+A **Vector** is just a fancy name for those three numbers grouped together: `[X, Y, Z]`.
+
+In VoxC, a Vector serves two purposes:
+1.  **Position:** "Where am I?" -> `[10, 50, -20]` means I am 10 units right, 50 units up, and 20 units forward.
+2.  **Direction/Force:** "Push me!" -> `[0, 100, 0]` means "Push me Up with 100 power."
+
+## 2.3 Vector Math (The hard part)
+VoxC does not do math for you. You have to do it manually.
+
+**Problem:** You are at `A`. The enemy is at `B`. You want to know the direction **from A to B**.
+**Solution:** `B - A`
+
+```text
+Enemy Position (B): [100, 0, 50]
+Your Position  (A): [ 10, 0, 50]
+
+Direction:
+X = 100 - 10 = 90
+Y =   0 -  0 = 0
+Z =  50 - 50 = 0
+
+Result: [90, 0, 0]
+```
+This tells us the enemy is 90 units to the **Right**.
+
+## 2.4 Distance (Pythagoras)
+How far away is the enemy?
+The formula is: $a^2 + b^2 = c^2$.
+
+In 3D: `Distance = SquareRoot( (x2-x1)^2 + (y2-y1)^2 + (z2-z1)^2 )`
+
+*Note: VoxC does not have a SquareRoot function yet. We usually just compare "Distance Squared" to avoid complex math.*
+
+---
+
+## 3.1 The Notebook Analogy
+Variables (like `var x = 10`) are like sticky notes. You can stick them on your monitor. They are fast and easy to read.
+
+But... you only have a few sticky notes. What if you need to remember a list of 500 enemies? Or a Vector with 3 numbers? You can't fit that on one sticky note.
+
+You need a **Notebook**.
+In computing, this Notebook is called **The Heap (RAM)**.
+
+## 3.2 Allocation (Malloc)
+The Notebook is huge (4 Million bytes). But you can't just write anywhere, or you might write over other notes.
+
+You have to ask the Librarian (The Memory Manager) for space.
+*   **You:** "I need space for a Vector (24 bytes)."
+*   **Librarian:** "Okay, start writing at Page 1040."
+
+In Code:
+```c
+var ptr = vec(0, 0, 0); // Asks for space. 'ptr' becomes 1040.
+```
+The variable `ptr` does **not** hold the vector. It holds the **Page Number** (Address) where the vector is stored. This is called a **Pointer**.
+
+## 3.3 Reading from the Notebook
+To read your vector, you go to the page number.
+
+*   Page 1040: **X Value**
+*   Page 1048: **Y Value** (Because X takes up 8 bytes)
+*   Page 1056: **Z Value** (Because Y takes up 8 bytes)
+
+In Code:
+```c
+var x_val = mem_read(ptr);
+var y_val = mem_read(ptr + 8);  // Page 1040 + 8
+var z_val = mem_read(ptr + 16); // Page 1040 + 16
+```
+
+## 3.4 The Danger (Memory Leaks)
+If you ask the Librarian for a page, **no one else can use that page** until you give it back.
+
+If you keep asking for pages inside a loop...
+```c
+while (i < 1000) {
+    var p = vec(0,0,0); // Requesting a new page every millisecond!
+}
+```
+... you will run out of pages. The Librarian will yell **"OUT OF MEMORY"** and your script will crash.
+
+## 3.5 Cleaning Up (Free)
+When you are done with a Vector or a List, give the page back.
+
+```c
+free(ptr); // "I am done with page 1040."
+```
+
+---
+
+## 4.1 System Functions
+
+### `self()`
+*   **Description:** Asks "Who am I?"
+*   **Returns:** A unique number ID representing you.
+*   **Why use it?** When scanning for nearby players, you will find yourself. You need this ID to check "If the person I found is ME, don't attack."
+*   **Example:**
+    ```c
+    var me = self();
+    ```
+
+---
+
+## 4.2 Spatial Functions
+
+### `pos(entity_id)`
+*   **Description:** Asks the server "Where is this entity?"
+*   **Returns:** A **Pointer** to a Vector3 in memory.
+*   **Cost:** 50 Energy.
+*   **Warning:** This creates new memory. You MUST `free()` it.
+*   **Example:**
+    ```c
+    var my_pos = pos(me);
+    var y = mem_read(my_pos + 8); // How high am I?
+    free(my_pos); // Done with it.
+    ```
+
+### `near(position_ptr, radius)`
+*   **Description:** The Radar. Scans a sphere around a point.
+*   **Returns:** A **Pointer** to a List in memory.
+*   **Cost:** 150 Energy (Expensive!).
+*   **The List Format:**
+    *   Offset 0: **Count** (How many people found).
+    *   Offset 8: **ID 1**
+    *   Offset 16: **ID 2**
+    *   ...etc.
+*   **Example:**
+    ```c
+    var my_pos = pos(me);
+    var list = near(my_pos, 50); // Scan 50 studs around me
+    var count = mem_read(list);  // How many?
+    free(list);
+    free(my_pos);
+    ```
+
+---
+
+## 4.3 Creation Functions
+
+### `vec(x, y, z)`
+*   **Description:** Creates a Vector3 in memory manually.
+*   **Returns:** A **Pointer**.
+*   **Cost:** 20 Energy.
+*   **Usage:** Used to create logic variables or force vectors.
+*   **Example:**
+    ```c
+    // Create a vector pointing straight UP
+    var up = vec(0, 500, 0);
+    ```
+
+---
+
+## 4.4 Action Functions
+
+### `force(entity_id, vector_ptr)`
+*   **Description:** The "Yeet" function. Pushes an entity.
+*   **Cost:** 250 Energy.
+*   **Physics:** It applies a `BodyVelocity` for 0.2 seconds.
+*   **Limits:** Max force is 100,000. You cannot launch someone to the moon (easily).
+*   **Example:**
+    ```c
+    force(enemy_id, up_vector); // Goodbye enemy!
+    ```
+
+### `set_hp(entity_id, amount)`
+*   **Description:** God mode. Changes health directly.
+*   **Cost:** 400 Energy.
+*   **Usage:** Heal yourself or execute enemies.
+*   **Example:**
+    ```c
+    set_hp(me, 100); // Heal to full
+    set_hp(enemy, 0); // Kill
+    ```
+
+---
+
+## 4.5 Low Level Memory
+
+### `mem_read(ptr)`
+*   **Description:** Peeks at a specific memory address.
+*   **Cost:** 1 Energy.
+
+### `mem_write(ptr, value)`
+*   **Description:** Writes to a specific memory address.
+*   **Cost:** 1 Energy.
+*   **Advanced:** You can use this to modify vectors returned by `pos()` without allocating new ones!
+
+### `free(ptr)`
+*   **Description:** Releases memory.
+*   **Cost:** 0 Energy.
+
+---
+
+## Tutorial 1: The "Kill Aura"
+**Goal:** Automatically kill anyone who gets too close.
+
+**Step 1: Setup Variables**
+We need to know who we are and where we are.
+```c
+var me = self();
+var p = pos(me);
+```
+
+**Step 2: Scan the area**
+Look for people within 20 studs.
+```c
+var radius = 20;
+var list = near(p, radius);
+```
+
+**Step 3: How many people?**
+Read the first number in the list.
+```c
+var count = mem_read(list);
+```
+
+**Step 4: The Loop**
+We need to check every single person in that list.
+```c
+var i = 0;
+while (i < count) {
+    // LOGIC GOES HERE
     i = i + 1;
 }
 ```
 
-**Memory Safe Example:**
+**Step 5: Get the ID**
+This is the math part.
+List structure: `[Count] [ID0] [ID1] [ID2]`
+*   At `i=0`, we want the number at offset 8.
+*   At `i=1`, we want the number at offset 16.
+*   Formula: `8 + (i * 8)`.
+
 ```c
-// Allocation outside the loop
-var up = vec(0, 10, 0); 
-while (i < 100) {
-    force(target, up);
+    var offset = 8 + (i * 8);
+    var id_ptr = list + offset;
+    var target_id = mem_read(id_ptr);
+```
+
+**Step 6: Kill them (safely)**
+Don't kill yourself!
+```c
+    if (target_id != me) {
+        set_hp(target_id, 0);
+    }
+```
+
+**Step 7: Clean Up**
+If we don't free the memory, our game crashes after a few seconds.
+```c
+free(list);
+free(p);
+```
+
+---
+
+## Tutorial 2: The "Repulsor" (Advanced Math)
+**Goal:** Push enemies away based on where they are standing.
+
+This requires Vector Subtraction.
+`Force = EnemyPosition - MyPosition`.
+
+```c
+var me = self();
+var my_pos = pos(me);
+var list = near(my_pos, 30);
+var count = mem_read(list);
+var i = 0;
+
+// Read my coordinates once to save energy
+var mx = mem_read(my_pos);
+var my = mem_read(my_pos + 8);
+var mz = mem_read(my_pos + 16);
+
+while (i < count) {
+    var ptr = list + 8 + (i * 8);
+    var target = mem_read(ptr);
+    
+    if (target != me) {
+        // Get their position
+        var t_pos = pos(target);
+        
+        // Read their coordinates
+        var tx = mem_read(t_pos);
+        var ty = mem_read(t_pos + 8);
+        var tz = mem_read(t_pos + 16);
+        
+        // CALCULATE DIRECTION: Target - Me
+        var dx = tx - mx;
+        var dz = tz - mz;
+        
+        // Amplify force (Multiply by 500)
+        var fx = dx * 500;
+        var fz = dz * 500;
+        
+        // Create the Force Vector
+        // We push them UP (5000) and Away (fx, fz)
+        var force_vec = vec(fx, 5000, fz);
+        
+        force(target, force_vec);
+        
+        // Free loop memory
+        free(t_pos);
+        free(force_vec);
+    }
     i = i + 1;
 }
-// Deallocation
-free(up); 
+
+// Cleanup global memory
+free(list);
+free(my_pos);
 ```
 
 ---
 
-# 3. Language Syntax
+## 6.1 The Energy Grid
+You have **2000 Energy**.
+*   `set_hp` costs 400. You can only use it **5 times** before your battery dies.
+*   `force` costs 250. You can use it **8 times**.
 
-### 3.1 Lexical Grammar
-*   **Identifiers:** Must start with a letter. Can contain `_` and numbers.
-*   **Literals:** Numbers (`10`, `0.5`, `-50`), Hex (`0xFF`), Strings (`"Health"`).
-*   **Strings:** Only permitted in specific API calls (`set_hp`). You cannot assign a string to a variable (e.g., `var x = "hello"` is invalid).
+## 6.2 Optimization Strategies
 
-### 3.2 Variables & Scope
-Variables are declared with `var`.
-```c
-var energy = 100;
-var target = 0;
-```
-*   **Cost:** Declaring or assigning a variable costs **2 Energy**.
-*   **Scope:** Variables declared inside a block (`{}`) remain in memory until the script finishes.
+**Strategy A: Dont Allocate inside Loops**
+*   **Bad:** Calling `vec(0,50,0)` inside a loop. You pay 20 Energy every single time.
+*   **Good:** Call `vec` *before* the loop. Save the pointer. Use the pointer inside the loop. Pay 20 Energy once.
 
-### 3.3 Control Flow
+**Strategy B: Don't scan too often**
+*   `near()` is expensive (150 Energy).
+*   If you are fighting one person, get their ID once and save it. Don't scan for them every frame.
 
-#### If / Else
-Logic gates based on numeric truth (Non-zero = True).
-```c
-if (target != me) {
-    // Attack
-}
-```
-
-#### While Loops
-Repeats code block.
-```c
-while (energy > 0) {
-    // Work
-}
-```
-
-### 3.4 Operators & Precedence
-(Ordered High to Low)
-1.  `()` (Parentheses)
-2.  `*`, `/` (Multiplication, Division)
-3.  `+`, `-` (Addition, Subtraction)
-4.  `>`, `<`, `==`, `!=` (Comparison)
+## 6.3 The Cycle Limit
+To prevent the server from freezing, VoxC stops any script that runs more than **10,000 instructions**.
+*   Be careful with `while` loops.
+*   If you write `while (1 == 1) {}`, your script will die instantly.
 
 ---
 
-# 4. Standard Library (API)
-
-### 4.1 System Input/Output
-
-#### `self()`
-*   **Signature:** `self() -> EntityID`
-*   **Energy Cost:** 5
-*   **Description:** Returns the Integer ID of the entity running the script. Essential for ensuring you don't attack yourself.
-
-### 4.2 Spatial Querying
-
-#### `pos(id)`
-*   **Signature:** `pos(EntityID) -> Pointer`
-*   **Energy Cost:** 50
-*   **Returns:** A pointer to a new 24-byte Vector3 in the Heap.
-*   **Failure:** Returns `0` if the entity is invalid or dead.
-*   **Memory Note:** You **must** `free()` this pointer.
-
-#### `near(pos_ptr, radius)`
-*   **Signature:** `near(Pointer, Number) -> Pointer`
-*   **Energy Cost:** 150
-*   **Returns:** A pointer to a List Structure in the Heap.
-*   **Description:** Performs a spatial sphere-check on the server.
-*   **Memory Note:** You **must** `free()` this pointer. The list size depends on how many entities are found.
-
-### 4.3 Physics Manipulation
-
-#### `vec(x, y, z)`
-*   **Signature:** `vec(Number, Number, Number) -> Pointer`
-*   **Energy Cost:** 20
-*   **Description:** Allocates 24 bytes and writes the 3 numbers provided.
-
-#### `force(id, vec_ptr)`
-*   **Signature:** `force(EntityID, Pointer) -> 0`
-*   **Energy Cost:** 250
-*   **Description:** Applies a `BodyVelocity` to the target's RootPart.
-*   **Behavior:** Velocity is applied instantaneously and decays over 0.2 seconds.
-*   **Limits:** Max force is clamped to `100,000` units to prevent physics engine crashes.
-
-#### `set_hp(id, amount)`
-*   **Signature:** `set_hp(EntityID, Number) -> 0`
-*   **Energy Cost:** 400
-*   **Description:** Directly modifies the `Humanoid.Health` property.
-*   **Usage:** Can be used to Heal (amount > current) or Damage (amount < current).
-
-### 4.4 Direct Memory Access (DMA)
-
-#### `mem_read(ptr)`
-*   **Signature:** `mem_read(Pointer) -> Number`
-*   **Energy Cost:** 1
-*   **Description:** Returns the value stored at the specific byte offset.
-
-#### `mem_write(ptr, value)`
-*   **Signature:** `mem_write(Pointer, Number) -> 0`
-*   **Energy Cost:** 1
-*   **Description:** Overwrites the value at the specific byte offset.
-*   **Warning:** Writing to random addresses can corrupt your own variables or vectors.
-
-#### `free(ptr)`
-*   **Signature:** `free(Pointer) -> 0`
-*   **Energy Cost:** 0
-*   **Description:** Notifies the Memory Manager that the block at `ptr` is no longer needed.
-
----
-
-# 5. Advanced Mathematics Library
-
-VoxC does not include a math library (`Math.sqrt`, `Vector3.new`, etc.). You must implement vector math manually using raw memory operations.
-
-### 5.1 Implementing Distance
-Calculating the distance between two entities.
-Formula: $\sqrt{(x2-x1)^2 + (y2-y1)^2 + (z2-z1)^2}$
-
-*Note: VoxC does not currently support `sqrt`. We rely on distance comparisons using Distance Squared to avoid expensive square root operations.*
-
-```c
-// Input: Two Position Pointers (p1, p2)
-var x1 = mem_read(p1);
-var y1 = mem_read(p1 + 8);
-var z1 = mem_read(p1 + 16);
-
-var x2 = mem_read(p2);
-var y2 = mem_read(p2 + 8);
-var z2 = mem_read(p2 + 16);
-
-var dx = x2 - x1;
-var dy = y2 - y1;
-var dz = z2 - z1;
-
-// Distance Squared
-var dist_sq = (dx*dx) + (dy*dy) + (dz*dz);
-
-if (dist_sq < 900) { 
-    // Distance is less than 30 (30*30 = 900)
-}
-```
-
-### 5.2 Implementing Vector Normalization
-To launch an enemy *away* from you, you need a Normalized Direction Vector.
-Since we lack `sqrt`, we approximate or use fixed values.
-
-**Simple Direction (Non-Normalized):**
-```c
-var diff_x = target_x - my_x;
-var diff_z = target_z - my_z;
-
-// Apply raw difference as force (Stronger if further away)
-force(target, vec(diff_x * 100, 50, diff_z * 100));
-```
-
-### 5.3 Implementing "Upward Launch"
-Simple vector addition logic to modify a position vector into a force vector.
-
-```c
-var p = pos(target); // Get [X, Y, Z]
-// We want [0, 5000, 0]
-// We don't care about their position, we just want a force vector.
-// So we allocate a NEW vector.
-
-var launch = vec(0, 5000, 0);
-force(target, launch);
-free(launch);
-free(p); // Don't forget to free the position we grabbed!
-```
-
----
-
-# 6. Design Patterns & Optimization
-
-### 6.1 The "Cache & Carry" Strategy
-API calls are the most expensive operations. Never call an API inside a loop if the result doesn't change.
-
-**Inefficient Code (Cost: 2000+ Energy):**
-```c
-// Logic: Push 10 enemies up
-var i = 0;
-while (i < 10) {
-    // 250 Energy for force
-    // 20 Energy for vec allocation
-    // Total per loop: 270. 
-    // 10 Loops = 2700 Energy. CRASH.
-    force(target, vec(0, 50, 0)); 
-}
-```
-
-**Optimized Code (Cost: ~250 Energy):**
-```c
-var up = vec(0, 50, 0); // 20 Energy
-var i = 0;
-while (i < 10) {
-    force(target, up); // 250 Energy
-    // Note: This still hits energy limits quickly.
-    // You can only force ~7 entities per script execution.
-}
-free(up);
-```
-
-### 6.2 The "Safe Scan" Protocol
-Always verify data before using it.
-1.  Check if `near()` returned a valid pointer (not 0).
-2.  Check if `count` is greater than 0.
-3.  Check if `target` is not `self()`.
-
----
-
-# 7. Error Codes
-
-| Error Message | Cause |
-| :--- | :--- |
-| `Line X: OUT OF ENERGY` | Your script consumed >2000 energy. Optimization required. |
-| `Line X: OUT OF MEMORY` | Heap >4MB. You are leaking memory (missing `free`). |
-| `Line X: MAX CYCLES` | Infinite loop detected. Check your `while` conditions. |
-| `Line X: attempt to perform arithmetic` | You tried to add a number to a non-existent variable. |
-| `Line X: missing method '...'` | Typo in function name (e.g., `Pos` instead of `pos`). |
+| Error Message | Translation | Fix |
+| :--- | :--- | :--- |
+| `OUT OF ENERGY` | You used too many expensive functions. | Use fewer `force`/`near` calls. Move allocations outside loops. |
+| `OUT OF MEMORY` | The Heap (4MB) is full. | You forgot to `free()` your pointers. |
+| `MAX CYCLES` | The code ran for too long. | Check your `while` loops. Are you increasing `i`? |
+| `attempt to call nil` | You typed a function name wrong. | Check spelling. `Pos` vs `pos`. |
+| `arithmetic on string` | You tried to do math on text. | VoxC doesn't support strings in variables. |
