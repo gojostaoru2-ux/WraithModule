@@ -1,215 +1,365 @@
-# VoxC Technical Reference Manual
+# VoxC Language Specification & Technical Reference
 
 ---
 
-## 1. Introduction
-VoxC is a high-level, imperative, C-style scripting language designed for the Vox Engine. It provides a layer of abstraction over the raw VoxASM bytecode, allowing for complex entity manipulation, memory management, and vector mathematics.
-
-Unlike traditional Lua scripting, VoxC code is **compiled** and executed within a sandboxed Virtual Machine (VM). This VM enforces strict constraints on CPU cycles, memory usage, and "Energy" consumption to ensure server stability and gameplay balance.
-
-### 1.1 Design Philosophy
-*   **Safety:** No user script can crash the host server. Infinite loops are caught by the cycle limiter.
-*   **Resource Management:** Every action has a cost. Efficient code is rewarded; wasteful code is terminated.
-*   **Manual Memory:** There is no Garbage Collector. You malloc. You free. You control the heap.
+## Table of Contents
+1.  **System Architecture**
+    *   1.1 The Virtual Machine
+    *   1.2 Resource Constraints (The Triad)
+    *   1.3 Execution Pipeline
+2.  **Memory Architecture**
+    *   2.1 The Heap Model
+    *   2.2 Data Representation (IEEE 754)
+    *   2.3 Memory Layouts & Byte Alignment
+    *   2.4 Pointer Arithmetic
+    *   2.5 Memory Safety & Leaks
+3.  **Language Syntax**
+    *   3.1 Lexical Grammar
+    *   3.2 Variables & Scope
+    *   3.3 Control Flow
+    *   3.4 Operators & Precedence
+4.  **Standard Library (API)**
+    *   4.1 System Input/Output
+    *   4.2 Spatial Querying
+    *   4.3 Physics Manipulation
+    *   4.4 Direct Memory Access (DMA)
+5.  **Advanced Mathematics Library**
+    *   5.1 Implementing Distance
+    *   5.2 Implementing Normalization
+    *   5.3 Implementing Dot Product
+6.  **Design Patterns & Optimization**
+    *   6.1 The "Cache & Carry" Strategy
+    *   6.2 The "Safe Scan" Protocol
+7.  **Error Codes & Troubleshooting**
 
 ---
 
-## 2. The Memory Model
+# 1. System Architecture
 
-The Vox Engine provides a raw **4MB (4,194,304 bytes)** Heap for every execution context.
+### 1.1 The Virtual Machine
+VoxC does not run directly on the Roblox Lua engine. Instead, it is compiled into an Abstract Syntax Tree (AST) and executed by the **VoxVM**. This sandboxed environment ensures that user code remains isolated from critical server processes.
 
-### 2.1 The Heap
-The Heap is a contiguous array of bytes. When you declare a variable in VoxC, that variable usually lives in a virtual "register." However, complex data (Structs, Arrays, Vectors) must live in the Heap.
+The VM operates on a **Fetch-Decode-Execute** cycle. It parses one statement at a time, resolves memory addresses, and executes the logic while deducting energy costs in real-time.
 
-### 2.2 Pointers
-VoxC uses **64-bit Floating Point** numbers for everything. When referencing data in the Heap, a variable holds a **Pointer** (an integer representing the memory index), not the data itself.
+### 1.2 Resource Constraints (The Triad)
+To simulate the limitations of embedded hacking devices, the VoxVM enforces three hard limits. Exceeding any of these results in an immediate `SIGKILL` (Script Termination).
 
-> **Warning:** Dereferencing a pointer that has not been allocated (Segfault) or has already been freed (Use-After-Free) will return `0` or garbage data. It will not crash the VM, but your logic will fail.
+| Resource | Limit | Description | Failure State |
+| :--- | :--- | :--- | :--- |
+| **Energy** | 2,000 Units | The "fuel" for execution. Heavy API calls drain this fast. | `OUT OF ENERGY` |
+| **Cycles** | 10,000 Ops | The CPU time allowed. Prevents infinite loops/server freezing. | `MAX CYCLES EXCEEDED` |
+| **Memory** | 4.0 MB | The Heap space available for dynamic allocation. | `OUT OF MEMORY` |
 
-### 2.3 Data Structures
-Because memory is raw, data structures follow strict byte alignments.
+### 1.3 Execution Pipeline
+1.  **Source:** Raw text input from the IDE.
+2.  **Lexer:** Converts text into tokens (`ID`, `NUM`, `SYM`, `STR`).
+3.  **Parser:** Validates grammar and builds the AST.
+4.  **Linker:** Allocates static memory for variables (`var`).
+5.  **Runtime:** Executes instructions.
+
+---
+
+# 2. Memory Architecture
+
+This is the most critical subsystem of VoxC. Unlike high-level languages (Lua, Python), VoxC has **no Garbage Collection**. You are responsible for every byte.
+
+### 2.1 The Heap Model
+The Heap is a contiguous array of 4,194,304 bytes.
+*   **Address Space:** `0x0000` to `0x400000`.
+*   **Null Pointer:** `0`. Accessing address 0 is safe (returns 0) but usually indicates a logic error.
+*   **Allocation Strategy:** The VM uses a linear allocator. `free()` marks blocks as reusable, but fragmentation can occur if you allocate/free in random orders.
+
+### 2.2 Data Representation
+VoxC is typeless. Every variable and memory slot holds a **64-bit Double-Precision Floating Point Number**.
+*   **Integers:** Represented as Floats (e.g., `5.0`).
+*   **Pointers:** Represented as Floats (e.g., `1024.0`).
+*   **Booleans:** `1.0` is True, `0.0` is False.
+
+### 2.3 Memory Layouts & Byte Alignment
+When you allocate memory, you must understand how data is structured.
 
 #### The Vector3 Structure (24 Bytes)
-| Offset | Type | Description |
-| :--- | :--- | :--- |
-| `0x00` | Double (8b) | X Component |
-| `0x08` | Double (8b) | Y Component |
-| `0x10` | Double (8b) | Z Component |
+Used for Position, Velocity, and Raycasting.
+```text
+[ Pointer (Base) ]
+|
++---Offset 0x00:  X Component (8 Bytes)
+|
++---Offset 0x08:  Y Component (8 Bytes)
+|
++---Offset 0x10:  Z Component (8 Bytes)
+```
 
-#### The List Structure (Dynamic)
-Lists returned by the API (e.g., `near()`) follow a length-prefixed format.
+#### The Dynamic List Structure (8 + N*8 Bytes)
+Returned by `near()`.
+```text
+[ Pointer (Base) ]
+|
++---Offset 0x00:  Count (Number of items, e.g., 2)
+|
++---Offset 0x08:  EntityID_1 (8 Bytes)
+|
++---Offset 0x10:  EntityID_2 (8 Bytes)
+|
+...
+```
 
-| Offset | Type | Description |
-| :--- | :--- | :--- |
-| `0x00` | Double (8b) | **Count** (N) |
-| `0x08` | Double (8b) | Item[0] |
-| `0x10` | Double (8b) | Item[1] |
-| ... | ... | ... |
-| `0x08 + (N * 8)` | Double (8b) | Item[N] |
+### 2.4 Pointer Arithmetic
+To traverse a list, you cannot simply use `list[i]`. You must calculate the raw memory address.
+
+**Formula:**
+$$Address = Base + HeaderSize + (Index \times ElementSize)$$
+
+**In VoxC:**
+```c
+// Assuming 'list' is a pointer to a List Structure
+// Accessing index 'i'
+var ptr = list + 8 + (i * 8);
+var value = mem_read(ptr);
+```
+
+### 2.5 Memory Safety & Leaks
+**The Golden Rule:** For every `malloc/vec/near/pos`, there must be a `free`.
+
+**Memory Leak Example (Catastrophic):**
+```c
+while (i < 100) {
+    // This allocates 24 bytes every loop iteration.
+    // The previous 24 bytes are lost forever in the heap (Leaked).
+    // After enough iterations, the VM crashes.
+    force(target, vec(0, 10, 0)); 
+    i = i + 1;
+}
+```
+
+**Memory Safe Example:**
+```c
+// Allocation outside the loop
+var up = vec(0, 10, 0); 
+while (i < 100) {
+    force(target, up);
+    i = i + 1;
+}
+// Deallocation
+free(up); 
+```
 
 ---
 
-## 3. Language Specification
+# 3. Language Syntax
 
 ### 3.1 Lexical Grammar
-*   **Termination:** Statements must end with `;`.
-*   **Blocks:** Scopes are defined by `{ ... }`.
-*   **Comments:** `//` denotes a single-line comment.
-*   **Case Sensitivity:** VoxC is case-sensitive. `Var` != `var`.
+*   **Identifiers:** Must start with a letter. Can contain `_` and numbers.
+*   **Literals:** Numbers (`10`, `0.5`, `-50`), Hex (`0xFF`), Strings (`"Health"`).
+*   **Strings:** Only permitted in specific API calls (`set_hp`). You cannot assign a string to a variable (e.g., `var x = "hello"` is invalid).
 
-### 3.2 Variable Declaration
-Variables are dynamically typed but implicitly treated as numbers.
+### 3.2 Variables & Scope
+Variables are declared with `var`.
 ```c
-var speed = 100;      // Number
-var ptr = 0x1040;     // Number (Pointer)
-var id = self();      // Number (EntityID)
+var energy = 100;
+var target = 0;
 ```
+*   **Cost:** Declaring or assigning a variable costs **2 Energy**.
+*   **Scope:** Variables declared inside a block (`{}`) remain in memory until the script finishes.
 
 ### 3.3 Control Flow
 
 #### If / Else
-Standard conditional branching. Non-zero values are treated as `TRUE`. Zero is `FALSE`.
+Logic gates based on numeric truth (Non-zero = True).
 ```c
-if (health < 10) {
-    escape();
+if (target != me) {
+    // Attack
 }
 ```
 
 #### While Loops
-Loops continue until the condition is 0.
-> **Constraint:** The VM enforces a hard limit of 10,000 Cycles. A heavy loop will exhaust this limit instantly.
+Repeats code block.
+```c
+while (energy > 0) {
+    // Work
+}
+```
+
+### 3.4 Operators & Precedence
+(Ordered High to Low)
+1.  `()` (Parentheses)
+2.  `*`, `/` (Multiplication, Division)
+3.  `+`, `-` (Addition, Subtraction)
+4.  `>`, `<`, `==`, `!=` (Comparison)
+
+---
+
+# 4. Standard Library (API)
+
+### 4.1 System Input/Output
+
+#### `self()`
+*   **Signature:** `self() -> EntityID`
+*   **Energy Cost:** 5
+*   **Description:** Returns the Integer ID of the entity running the script. Essential for ensuring you don't attack yourself.
+
+### 4.2 Spatial Querying
+
+#### `pos(id)`
+*   **Signature:** `pos(EntityID) -> Pointer`
+*   **Energy Cost:** 50
+*   **Returns:** A pointer to a new 24-byte Vector3 in the Heap.
+*   **Failure:** Returns `0` if the entity is invalid or dead.
+*   **Memory Note:** You **must** `free()` this pointer.
+
+#### `near(pos_ptr, radius)`
+*   **Signature:** `near(Pointer, Number) -> Pointer`
+*   **Energy Cost:** 150
+*   **Returns:** A pointer to a List Structure in the Heap.
+*   **Description:** Performs a spatial sphere-check on the server.
+*   **Memory Note:** You **must** `free()` this pointer. The list size depends on how many entities are found.
+
+### 4.3 Physics Manipulation
+
+#### `vec(x, y, z)`
+*   **Signature:** `vec(Number, Number, Number) -> Pointer`
+*   **Energy Cost:** 20
+*   **Description:** Allocates 24 bytes and writes the 3 numbers provided.
+
+#### `force(id, vec_ptr)`
+*   **Signature:** `force(EntityID, Pointer) -> 0`
+*   **Energy Cost:** 250
+*   **Description:** Applies a `BodyVelocity` to the target's RootPart.
+*   **Behavior:** Velocity is applied instantaneously and decays over 0.2 seconds.
+*   **Limits:** Max force is clamped to `100,000` units to prevent physics engine crashes.
+
+#### `set_hp(id, amount)`
+*   **Signature:** `set_hp(EntityID, Number) -> 0`
+*   **Energy Cost:** 400
+*   **Description:** Directly modifies the `Humanoid.Health` property.
+*   **Usage:** Can be used to Heal (amount > current) or Damage (amount < current).
+
+### 4.4 Direct Memory Access (DMA)
+
+#### `mem_read(ptr)`
+*   **Signature:** `mem_read(Pointer) -> Number`
+*   **Energy Cost:** 1
+*   **Description:** Returns the value stored at the specific byte offset.
+
+#### `mem_write(ptr, value)`
+*   **Signature:** `mem_write(Pointer, Number) -> 0`
+*   **Energy Cost:** 1
+*   **Description:** Overwrites the value at the specific byte offset.
+*   **Warning:** Writing to random addresses can corrupt your own variables or vectors.
+
+#### `free(ptr)`
+*   **Signature:** `free(Pointer) -> 0`
+*   **Energy Cost:** 0
+*   **Description:** Notifies the Memory Manager that the block at `ptr` is no longer needed.
+
+---
+
+# 5. Advanced Mathematics Library
+
+VoxC does not include a math library (`Math.sqrt`, `Vector3.new`, etc.). You must implement vector math manually using raw memory operations.
+
+### 5.1 Implementing Distance
+Calculating the distance between two entities.
+Formula: $\sqrt{(x2-x1)^2 + (y2-y1)^2 + (z2-z1)^2}$
+
+*Note: VoxC does not currently support `sqrt`. We rely on distance comparisons using Distance Squared to avoid expensive square root operations.*
 
 ```c
-var i = 0;
-while (i < count) {
-    // Logic
-    i = i + 1;
+// Input: Two Position Pointers (p1, p2)
+var x1 = mem_read(p1);
+var y1 = mem_read(p1 + 8);
+var z1 = mem_read(p1 + 16);
+
+var x2 = mem_read(p2);
+var y2 = mem_read(p2 + 8);
+var z2 = mem_read(p2 + 16);
+
+var dx = x2 - x1;
+var dy = y2 - y1;
+var dz = z2 - z1;
+
+// Distance Squared
+var dist_sq = (dx*dx) + (dy*dy) + (dz*dz);
+
+if (dist_sq < 900) { 
+    // Distance is less than 30 (30*30 = 900)
 }
+```
+
+### 5.2 Implementing Vector Normalization
+To launch an enemy *away* from you, you need a Normalized Direction Vector.
+Since we lack `sqrt`, we approximate or use fixed values.
+
+**Simple Direction (Non-Normalized):**
+```c
+var diff_x = target_x - my_x;
+var diff_z = target_z - my_z;
+
+// Apply raw difference as force (Stronger if further away)
+force(target, vec(diff_x * 100, 50, diff_z * 100));
+```
+
+### 5.3 Implementing "Upward Launch"
+Simple vector addition logic to modify a position vector into a force vector.
+
+```c
+var p = pos(target); // Get [X, Y, Z]
+// We want [0, 5000, 0]
+// We don't care about their position, we just want a force vector.
+// So we allocate a NEW vector.
+
+var launch = vec(0, 5000, 0);
+force(target, launch);
+free(launch);
+free(p); // Don't forget to free the position we grabbed!
 ```
 
 ---
 
-## 4. Standard Library (API)
+# 6. Design Patterns & Optimization
 
-The Standard Library provides the interface between the VM and the Game World.
+### 6.1 The "Cache & Carry" Strategy
+API calls are the most expensive operations. Never call an API inside a loop if the result doesn't change.
 
-### 4.1 System Functions
-
-#### `self()`
-*   **Returns:** `EntityID`
-*   **Cost:** 5 Energy
-*   **Description:** Returns the unique unique integer identifier of the entity running the script.
-
-#### `free(ptr)`
-*   **Returns:** `0`
-*   **Cost:** 0 Energy
-*   **Description:** Marks the memory block at `ptr` as available. Failing to do this causes Memory Leaks.
-
-### 4.2 Spatial Functions
-
-#### `pos(id)`
-*   **Returns:** `Pointer` (Vector3)
-*   **Cost:** 50 Energy
-*   **Description:** Allocates 24 bytes in the Heap and populates it with the World Position of the target Entity. Returns `0` if the entity does not exist.
-
-#### `near(pos_ptr, radius)`
-*   **Returns:** `Pointer` (List)
-*   **Cost:** 150 Energy
-*   **Description:** Performs a spatial query (Sphere Overlap) on the server. Allocates a list containing the IDs of all entities detected.
-*   **Note:** This is an expensive operation. Do not call this inside a loop.
-
-### 4.3 Physics Functions
-
-#### `vec(x, y, z)`
-*   **Returns:** `Pointer` (Vector3)
-*   **Cost:** 20 Energy
-*   **Description:** Helper function to `malloc(24)` and write X, Y, Z values immediately.
-
-#### `force(id, vec_ptr)`
-*   **Returns:** `0`
-*   **Cost:** 250 Energy
-*   **Description:** Applies an impulse (BodyVelocity) to the target entity. The velocity persists for 0.2 seconds before decaying.
-
-### 4.4 Memory I/O
-
-#### `mem_read(ptr)`
-*   **Returns:** `Number`
-*   **Cost:** 1 Energy
-*   **Description:** Reads a 64-bit float from the specific Heap address.
-
-#### `mem_write(ptr, value)`
-*   **Returns:** `0`
-*   **Cost:** 1 Energy
-*   **Description:** writes a 64-bit float to the specific Heap address.
-
----
-
-## 5. Optimization & Best Practices
-
-The Vox Engine runs on a strict energy budget (2000 Units). Writing efficient code is required to execute complex logic.
-
-### 5.1 Pointer Caching
-**Bad Practice:**
+**Inefficient Code (Cost: 2000+ Energy):**
 ```c
+// Logic: Push 10 enemies up
+var i = 0;
 while (i < 10) {
-    // Allocates 24 bytes (20 Energy) every single loop!
-    // Total Cost: 200 Energy + 240 Bytes RAM
+    // 250 Energy for force
+    // 20 Energy for vec allocation
+    // Total per loop: 270. 
+    // 10 Loops = 2700 Energy. CRASH.
     force(target, vec(0, 50, 0)); 
 }
 ```
 
-**Good Practice:**
+**Optimized Code (Cost: ~250 Energy):**
 ```c
-// Allocates once. Total Cost: 20 Energy + 24 Bytes RAM.
-var up_vector = vec(0, 50, 0); 
-
-while (i < 10) {
-    force(target, up_vector);
-}
-free(up_vector);
-```
-
-### 5.2 List Iteration
-Iterating a list requires manual pointer arithmetic. This is the standard pattern:
-
-```c
-var list = near(pos(self()), 50);
-var count = mem_read(list); // First 8 bytes is count
+var up = vec(0, 50, 0); // 20 Energy
 var i = 0;
-
-while (i < count) {
-    // Calculate address of current item
-    // Base + Header(8) + (Index * 8)
-    var offset = 8 + (i * 8);
-    var current_ptr = list + offset;
-    
-    // Dereference to get ID
-    var entity_id = mem_read(current_ptr);
-    
-    // Logic here...
-    
-    i = i + 1;
+while (i < 10) {
+    force(target, up); // 250 Energy
+    // Note: This still hits energy limits quickly.
+    // You can only force ~7 entities per script execution.
 }
-free(list);
+free(up);
 ```
 
----
-
-## 6. Error Codes
-
-| Error | Meaning | Solution |
-| :--- | :--- | :--- |
-| `OUT OF ENERGY` | The script exceeded 2000 Energy. | Reduce API calls or optimize loops. |
-| `MAX CYCLES` | The script ran too long (10k ops). | Check for infinite `while` loops. |
-| `OUT OF MEMORY` | The 4MB Heap is full. | Ensure you `free()` all vectors and lists. |
-| `ATTEMPT TO CALL NIL` | Syntax Error. | Check for typos in function names. |
+### 6.2 The "Safe Scan" Protocol
+Always verify data before using it.
+1.  Check if `near()` returned a valid pointer (not 0).
+2.  Check if `count` is greater than 0.
+3.  Check if `target` is not `self()`.
 
 ---
 
-### NOTE ON ROBLOX LINKS
-**Important:** You cannot put a direct link to a website inside a Roblox game (e.g., on a Sign or GUI) unless it is one of the approved sites (YouTube, Twitter/X, Discord, Twitch).
+# 7. Error Codes
 
-**How to give this to players:**
-1.  Put this documentation in your **Discord Server**.
-2.  Put a link to the Discord server on your **Game Page**.
-3.  In the in-game GUI, simply say: **"For full documentation, join our Community Server (Link on Game Page)."**
+| Error Message | Cause |
+| :--- | :--- |
+| `Line X: OUT OF ENERGY` | Your script consumed >2000 energy. Optimization required. |
+| `Line X: OUT OF MEMORY` | Heap >4MB. You are leaking memory (missing `free`). |
+| `Line X: MAX CYCLES` | Infinite loop detected. Check your `while` conditions. |
+| `Line X: attempt to perform arithmetic` | You tried to add a number to a non-existent variable. |
+| `Line X: missing method '...'` | Typo in function name (e.g., `Pos` instead of `pos`). |
